@@ -1,3 +1,5 @@
+#![feature(proc_macro_hygiene)]
+
 use std::cmp;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -9,6 +11,7 @@ use huelib::{bridge::discover as discover_bridge, Bridge};
 use sunrise;
 
 mod conf;
+use render::{html, raw};
 
 // TODO: allow to pass this one via command line argument
 const TEST_LIGHT_ID: &str = "5";
@@ -104,7 +107,7 @@ fn get_brightness_modifier(bri: f32) -> light::StateModifier {
     light::StateModifier::new().brightness(ModifierType::Override, (bri * 254.) as u8)
 }
 
-fn main() {
+fn main2() {
     let running = Arc::new(AtomicBool::new(true));
     let is_running = || running.load(Ordering::SeqCst);
     let username = conf::get_username();
@@ -161,4 +164,41 @@ fn main() {
 
         thread::sleep(time::Duration::from_millis(1500))
     }
+}
+
+fn main() {
+    let (sunrise, sunset) = sunrise_sunset(conf::get_lat(), conf::get_lng());
+    // Wake up and bed time are offset by 30 minutes to allow for some slack
+    let wake_up_time = get_configured_timestamp(WAKE_UP_TIME) - (60 * 30);
+    let bed_time = get_configured_timestamp(BED_TIME) + (60 * 30);
+    let start_of_day = cmp::min(sunrise, wake_up_time);
+    let end_of_day = cmp::max(sunset, bed_time);
+
+    let tree = html! {
+        <div>
+            <p>{"<Hello />"}</p>
+            <p>{raw!("<Hello />")}</p>
+        </div>
+    };
+
+    println!("{}", tree);
+    println!(
+        "{:?}",
+        (0..24)
+            .flat_map(|h| (0..4).map(move |i| (h, i * 15)))
+            .map(|(h, m)| {
+                let timestamp = Local::now()
+                    .with_hour(h)
+                    .and_then(move |t| t.with_minute(m))
+                    .and_then(|t| t.with_second(0))
+                    .and_then(|t| t.with_nanosecond(0))
+                    .unwrap()
+                    .timestamp();
+                let bri = get_brightness(start_of_day, end_of_day, timestamp);
+                let ct = get_color_temperature(start_of_day, end_of_day, timestamp);
+
+                (h, m, bri, ct)
+            })
+            .collect::<Vec<_>>()
+    );
 }
